@@ -9,18 +9,35 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@langchain/openai": "^1.0.0",
+    "@langchain/textsplitters": "^1.0.0",
+    "@napi-rs/canvas": "^0.1.81",
+    "@supabase/supabase-js": "^2.78.0",
+    "axios": "^1.13.1",
+    "canvas": "^3.2.0",
+    "cohere-ai": "^7.19.0",
+    "form-data": "^4.0.4",
+    "langchain": "^1.0.2",
+    "next": "16.0.1",
+    "node-fetch": "^3.3.2",
+    "pdf-parse": "^2.4.5",
+    "pdfjs-dist": "^5.4.394",
     "react": "19.2.0",
     "react-dom": "19.2.0",
-    "next": "16.0.1"
+    "uploadthing": "^7.7.4"
   },
   "devDependencies": {
-    "typescript": "^5",
+    "@tailwindcss/cli": "^4.1.16",
+    "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@tailwindcss/postcss": "^4",
-    "tailwindcss": "^4",
+    "autoprefixer": "^10.4.21",
     "eslint": "^9",
-    "eslint-config-next": "16.0.1"
+    "eslint-config-next": "16.0.1",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.16",
+    "typescript": "^5"
   }
 }

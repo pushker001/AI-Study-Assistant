@@ -1,36 +1,70 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🧠 AI Study Assistant — Chat with Your PDFs  
+### Upload • Understand • Learn
 
-## Getting Started
+> An intelligent AI web application that lets you upload PDFs and chat with their content — powered by **Cohere embeddings**, **Gemini AI**, **PDF.co**, and **Supabase vector search**.
 
-First, run the development server:
+---
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## 🚀 Overview
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+**AI Study Assistant** (also known as **Chat with PDFs**) is a full-stack AI project that allows users to upload a PDF, process its content, and ask natural-language questions about it.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+When a user uploads a PDF:
+1. The text is extracted using the **PDF.co API**.  
+2. The content is split into smaller, manageable chunks.  
+3. Each chunk is converted into an **embedding** using **Cohere’s embedding model**.  
+4. The embeddings and text are stored in a **Supabase** vector database.  
+5. When the user asks a question, the app retrieves relevant chunks and sends them to **Gemini AI** to generate an accurate, context-aware answer.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+This follows a **Retrieval-Augmented Generation (RAG)** pipeline — meaning your chatbot answers directly from your uploaded PDFs, not from random AI knowledge.
 
-## Learn More
+---
 
-To learn more about Next.js, take a look at the following resources:
+## 🧩 Features
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+✅ Upload and process any PDF  
+✅ Extract text using **PDF.co API**  
+✅ Generate embeddings via **Cohere API**  
+✅ Store embeddings efficiently in **Supabase**  
+✅ Chat with your uploaded document using **Gemini AI**  
+✅ Contextual, accurate, and real-time answers  
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+---
 
-## Deploy on Vercel
+## 🏗️ Architecture
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```text
+                ┌──────────────────────────┐
+                │        Frontend (UI)     │
+                │  Next.js + Tailwind CSS  │
+                │  ─────────────────────── │
+                │  • PDF Upload Form       │
+                │  • Chat Interface        │
+                └─────────────┬────────────┘
+                              │
+                              ▼
+                ┌──────────────────────────┐
+                │        API Routes        │
+                │  (Next.js App Router)    │
+                │  • /api/upload → Extract, Embed, Store │
+                │  • /api/chat → Retrieve, Answer        │
+                └─────────────┬────────────┘
+                              │
+                              ▼
+                ┌──────────────────────────┐
+                │       Supabase DB        │
+                │ (Vector Storage & Search)│
+                │   • Stores embeddings    │
+                │   • Performs similarity  │
+                └─────────────┬────────────┘
+                              │
+                              ▼
+                ┌──────────────────────────┐
+                │        AI Models         │
+                │ ──────────────────────── │
+                │ • Cohere Embeddings (v3) │
+                │ • Gemini 1.5 Flash (LLM) │
+                └──────────────────────────┘
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+
