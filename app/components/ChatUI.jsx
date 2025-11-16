@@ -1,11 +1,19 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import axios from "axios";
 
 export default function ChatUI() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [sessionId, setSessionId] = useState(null);
+
+  //Generate session ID on component mount
+  useEffect(() => {
+    setSessionId(`session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
+  }, []);
+
+
 
   const sendMessage = async () => {
     if (!input.trim()) return;
@@ -18,7 +26,10 @@ export default function ChatUI() {
 
     try {
       // Send question to backend API
-      const res = await axios.post("/api/chat", { question: input });
+      const res = await axios.post("/api/chat", { 
+        question: input,
+        sessionId: sessionId
+      });
       const botMessage = { 
         role: "assistant", 
         content: res.data.answer,

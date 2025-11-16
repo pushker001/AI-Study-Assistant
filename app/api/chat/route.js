@@ -13,11 +13,29 @@ const cohere = new CohereClient({ token: process.env.COHERE_API_KEY });
 
 export async function POST(req) {
   try {
-    const { question } = await req.json();
+    const { question, sessionId } = await req.json();
 
     if (!question) {
       return NextResponse.json({ error: 'Question is required' }, { status: 400 });
     }
+
+    // Generate session ID if not provided
+    const currentSessionId = sessionId || `session_${Date.now()}`;
+
+    // Get conversation history (last 5 messages for context)
+    const { data: history } = await supabase
+      .from('conversations')
+      .select('role, content')
+      .eq('session_id', currentSessionId)
+      .order('created_at', { ascending: true })
+      .limit(10);
+
+    // Store user message
+    await supabase.from('conversations').insert({
+      session_id: currentSessionId,
+      role: 'user',
+      content: question
+    });
 
     // 1. Generate embedding for the question
     const questionEmbedding = await cohere.embed({
@@ -26,10 +44,7 @@ export async function POST(req) {
       inputType: 'search_query'
     });
 
-    console.log('Received question:', question);
-    console.log('Generated embedding length:', questionEmbedding.embeddings[0].length);
-
-    // 2. Find similar documents using vector similarity
+    // 2. Find similar documents
     const { data: documents, error } = await supabase.rpc('match_documents', {
       query_embedding: questionEmbedding.embeddings[0],
       match_threshold: 0.7,
@@ -41,38 +56,42 @@ export async function POST(req) {
       return NextResponse.json({ error: 'Search failed' }, { status: 500 });
     }
 
-    // 3. Prepare context from similar documents
-    // 3. Prepare context from similar documents with source tracking
+    // 3. Prepare context with conversation history
     const contextWithSources = documents.map((doc, index) => ({
       content: doc.content,
       source: `Document ${index + 1} (ID: ${doc.id})`,
       similarity: doc.similarity
     }));
 
-    const context = contextWithSources.map(item => 
+    const documentContext = contextWithSources.map(item => 
       `[Source: ${item.source}]\n${item.content}`
     ).join('\n\n---\n\n');
 
-    // 4. Enhanced prompt with source citation instructions
+    // Build conversation context
+    const conversationContext = history?.length > 0 
+      ? history.map(msg => `${msg.role}: ${msg.content}`).join('\n')
+      : '';
+
+    // 4. Enhanced prompt with conversation memory
     const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
       model: 'mistralai/mistral-7b-instruct:free',
       messages: [
         {
           role: 'user',
-          content: `You are a helpful study assistant. Answer the question based on the provided context. Always cite your sources using the format [Source: Document X].
+          content: `You are a helpful study assistant with conversation memory. Use the conversation history and document context to provide relevant answers.
 
-    Context:
-    ${context}
+${conversationContext ? `Previous Conversation:\n${conversationContext}\n\n` : ''}Document Context:
+${documentContext}
 
-    Question: ${question}
+Current Question: ${question}
 
-    Instructions:
-    - Answer based only on the provided context
-    - Always cite which document(s) you're referencing
-    - If information isn't in the context, say "I don't have enough information to answer that question"
-    - Be specific and helpful for studying
+Instructions:
+- Consider the conversation history when answering
+- Reference previous topics if relevant
+- Always cite sources using [Source: Document X]
+- If building on previous discussion, acknowledge it
 
-    Answer:`
+Answer:`
         }
       ]
     }, {
@@ -84,6 +103,14 @@ export async function POST(req) {
 
     const answer = response.data.choices[0].message.content;
 
+    // Store assistant response
+    await supabase.from('conversations').insert({
+      session_id: currentSessionId,
+      role: 'assistant',
+      content: answer,
+      sources: contextWithSources
+    });
+
     return NextResponse.json({ 
       answer,
       sources: contextWithSources.map(item => ({
@@ -91,7 +118,7 @@ export async function POST(req) {
         content: item.content.substring(0, 200) + '...',
         similarity: item.similarity
       })),
-      sourceCount: documents.length 
+      sessionId: currentSessionId
     });
 
   } catch (err) {
@@ -99,3 +126,4 @@ export async function POST(req) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
+
