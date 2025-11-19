@@ -13,7 +13,7 @@ const cohere = new CohereClient({ token: process.env.COHERE_API_KEY });
 
 export async function POST(req) {
   try {
-    const { question, sessionId } = await req.json();
+    const { question, sessionId, documentId } = await req.json();
 
     if (!question) {
       return NextResponse.json({ error: 'Question is required' }, { status: 400 });
@@ -44,24 +44,45 @@ export async function POST(req) {
       inputType: 'search_query'
     });
 
-    // 2. Find similar documents
-    const { data: documents, error } = await supabase.rpc('match_documents', {
+    // 2. Find similar documents (filter by documentId if provided)
+    let query = supabase.rpc('match_documents', {
       query_embedding: questionEmbedding.embeddings[0],
       match_threshold: 0.7,
       match_count: 3
     });
+    
+    if (documentId) {
+      query = supabase
+        .from('documents')
+        .select('*, similarity:embedding <-> $1')
+        .eq('document_id', documentId)
+        .order('similarity')
+        .limit(3);
+    }
+    
+    const { data: documents, error } = await query;
 
     if (error) {
       console.error('Supabase search error:', error);
       return NextResponse.json({ error: 'Search failed' }, { status: 500 });
     }
 
-    // 3. Prepare context with conversation history
-    const contextWithSources = documents.map((doc, index) => ({
-      content: doc.content,
-      source: `Document ${index + 1} (ID: ${doc.id})`,
-      similarity: doc.similarity
-    }));
+    // 3. Get document metadata for sources
+    const docIds = [...new Set(documents.map(d => d.document_id))];
+    const { data: docMeta } = await supabase
+      .from('documents_metadata')
+      .select('id, filename')
+      .in('id', docIds);
+    
+    const contextWithSources = documents.map((doc, index) => {
+      const meta = docMeta?.find(m => m.id === doc.document_id);
+      return {
+        content: doc.content,
+        source: meta ? `${meta.filename} (Chunk ${index + 1})` : `Document ${index + 1}`,
+        similarity: doc.similarity,
+        documentId: doc.document_id
+      };
+    });
 
     const documentContext = contextWithSources.map(item => 
       `[Source: ${item.source}]\n${item.content}`
