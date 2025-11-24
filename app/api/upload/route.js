@@ -2,88 +2,80 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
 import axios from 'axios';
+import { withAuth } from '../../lib/auth-middleware';
 const { CohereClient } = require('cohere-ai');
 
-// Initialize Supabase client
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-);
-
-// Extract text using PDF.co web service
+// Extract text using LangChain Python service only
 async function extractTextFromPDF(buffer) {
-  console.log('Starting PDF extraction...');
+  console.log('Starting LangChain PDF extraction...');
+  
   try {
-    // Step 1: Upload file to PDF.co
-    const uploadResponse = await axios.post('https://api.pdf.co/v1/file/upload/base64', {
-      file: buffer.toString('base64'),
-      name: 'document.pdf'
-    }, {
-      headers: {
-        'x-api-key': process.env.PDFCO_API_KEY,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    const fileUrl = uploadResponse.data.url;
-
-    // Step 2: Convert PDF to text
-    const convertResponse = await axios.post('https://api.pdf.co/v1/pdf/convert/to/text', {
-      url: fileUrl,
-      async: false
-    }, {
-      headers: {
-        'x-api-key': process.env.PDFCO_API_KEY,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    console.log('PDF.co response:', convertResponse.data);
+    const FormData = require('form-data');
+    const formData = new FormData();
+    formData.append('file', buffer, 'document.pdf');
     
-    // If there's a URL in response, fetch the text content
-    if (convertResponse.data.url) {
-      const textResponse = await axios.get(convertResponse.data.url);
-      console.log('Extracted text:', textResponse.data);
-      return {
-        text: textResponse.data || '',
-        pageCount: convertResponse.data.pageCount || 1
-      };
-    }
+    const response = await axios.post('http://localhost:8001/extract-pdf', formData, {
+      headers: {
+        ...formData.getHeaders(),
+        'Content-Type': 'multipart/form-data'
+      },
+      timeout: 30000 // 30 second timeout
+    });
+    
+    const result = response.data;
+    console.log('LangChain extraction successful:', result.total_elements, 'elements');
+    
+    // Combine all elements into structured text
+    const text = result.elements
+      .map(el => `[${el.type.toUpperCase()}]\n${el.content}`)
+      .join('\n\n');
     
     return {
-      text: convertResponse.data.body || '',
-      pageCount: convertResponse.data.pageCount || 1
+      text: text,
+      pageCount: result.page_count,
+      elements: result.elements,
+      extractionMethod: 'langchain'
     };
-  } catch (error) {
-    console.error('PDF.co API Error:', error.response?.data || error.message);
     
-    // If PDF extraction fails, return placeholder text for testing
-    console.log('Using placeholder text due to PDF restrictions');
-    const placeholderText = `Placeholder text extracted from PDF: ${Date.now()}. This allows testing the embedding pipeline.`;
-    console.log('Placeholder text:', placeholderText);
-    return {
-      text: placeholderText,
-      pageCount: 1
-    };
+  } catch (langchainError) {
+    console.error('LangChain extraction failed:', langchainError.message);
+    throw new Error(`PDF extraction failed: ${langchainError.message}`);
   }
 }
 
-// POST /api/upload
-export async function POST(req) {
+// Protected POST handler
+async function handleUpload(req) {
+  let docMetadata = null;
+  
   try {
+    const authHeader = req.headers.get('authorization');
+    const token = authHeader.split(' ')[1];
+    
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      {
+        global: {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      }
+    );
+
     const formData = await req.formData();
     const file = formData.get('file');
 
     if (!file)
       return NextResponse.json({ error: 'No file provided' }, { status: 400 });
 
-    // Create document metadata record
-    const { data: docMetadata, error: metaError } = await supabase
+    const { data: docMetadataResult, error: metaError } = await supabase
       .from('documents_metadata')
       .insert({
         filename: file.name,
         file_size: file.size,
-        status: 'processing'
+        status: 'processing',
+        user_id: req.user.id
       })
       .select()
       .single();
@@ -93,26 +85,26 @@ export async function POST(req) {
       return NextResponse.json({ error: 'Failed to create document record' }, { status: 500 });
     }
 
+    docMetadata = docMetadataResult;
+    console.log('Created document metadata with ID:', docMetadata.id);
+
     const buffer = Buffer.from(await file.arrayBuffer());
 
     try {
-      // Extract text from PDF file using web service
-      const { text, pageCount } = await extractTextFromPDF(buffer);
+      const { text, pageCount, extractionMethod } = await extractTextFromPDF(buffer);
 
       console.log('Text length:', text.length);
       console.log('Page count:', pageCount);
+      console.log('Extraction method:', extractionMethod);
 
-      // Split text into smaller chunks
       const splitter = new RecursiveCharacterTextSplitter({
         chunkSize: 1000,
         chunkOverlap: 200,
       });
 
       const docs = await splitter.createDocuments([text]);
-
       console.log('Number of docs created:', docs.length);
 
-      // Create Cohere client and generate embeddings
       const cohere = new CohereClient({ token: process.env.COHERE_API_KEY });
 
       console.log('Starting embedding generation...');
@@ -132,12 +124,9 @@ export async function POST(req) {
         })
       );
 
-      console.log('Number of vectors to insert:', vectors.length);
-
-      // Store each embedding + text in Supabase with document_id
+      console.log('Inserting', vectors.length, 'vectors into database...');
       for (const v of vectors) {
-        console.log('Inserting vector:', v.id);
-        const { data, error } = await supabase.from('documents').insert({
+        const { error } = await supabase.from('documents').insert({
           id: v.id,
           content: v.content,
           embedding: v.embedding,
@@ -147,13 +136,14 @@ export async function POST(req) {
         if (error) {
           console.error('Supabase insert error:', error);
           throw error;
-        } else {
-          console.log('Successfully inserted:', v.id);
         }
       }
+      console.log('All vectors inserted successfully');
 
       // Update document status to ready
-      await supabase
+      console.log('Updating document status to ready...');
+      
+      const updateResult = await supabase
         .from('documents_metadata')
         .update({ 
           status: 'ready',
@@ -161,25 +151,77 @@ export async function POST(req) {
         })
         .eq('id', docMetadata.id);
 
+      console.log('Status update result:', updateResult);
+      
+      if (updateResult.error) {
+        console.error('Status update failed:', updateResult.error);
+      } else {
+        console.log('Status updated successfully to ready');
+      }
+
       return NextResponse.json({ 
         message: 'Uploaded and indexed successfully!',
-        documentId: docMetadata.id
+        documentId: docMetadata.id,
+        extractionMethod: extractionMethod
       });
 
     } catch (processingError) {
       console.error('Processing error:', processingError);
       
-      // Update status to error if processing fails
-      await supabase
-        .from('documents_metadata')
-        .update({ status: 'error' })
-        .eq('id', docMetadata.id);
+      // Delete the failed document metadata instead of marking as error
+      if (docMetadata && docMetadata.id) {
+        console.log('Deleting failed document metadata:', docMetadata.id);
+        const deleteResult = await supabase
+          .from('documents_metadata')
+          .delete()
+          .eq('id', docMetadata.id);
+          
+        console.log('Delete result:', deleteResult);
+        
+        if (deleteResult.error) {
+          console.error('Failed to delete document metadata:', deleteResult.error);
+        } else {
+          console.log('Failed document deleted successfully');
+        }
+      }
 
       throw processingError;
     }
 
   } catch (err) {
     console.error('Upload error:', err);
+    
+    // Additional cleanup in case of outer try-catch
+    if (docMetadata && docMetadata.id) {
+      try {
+        const authHeader = req.headers.get('authorization');
+        const token = authHeader.split(' ')[1];
+        
+        const supabase = createClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL,
+          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+          {
+            global: {
+              headers: {
+                Authorization: `Bearer ${token}`
+              }
+            }
+          }
+        );
+        
+        await supabase
+          .from('documents_metadata')
+          .delete()
+          .eq('id', docMetadata.id);
+          
+        console.log('Cleaned up failed document in outer catch');
+      } catch (cleanupError) {
+        console.error('Cleanup failed:', cleanupError);
+      }
+    }
+    
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
+
+export const POST = withAuth(handleUpload);

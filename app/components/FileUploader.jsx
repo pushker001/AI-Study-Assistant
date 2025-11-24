@@ -2,6 +2,7 @@
 import { useState } from "react";
 import axios from "axios";
 import { useRouter } from 'next/navigation';
+import { getAuthHeaders } from '../lib/auth';
 
 export default function FileUploader() {
   const [uploading, setUploading] = useState(false);
@@ -19,14 +20,23 @@ export default function FileUploader() {
     formData.append("file", file);
 
     try {
-      const response = await axios.post("/api/upload", formData);
+      const headers = await getAuthHeaders();
+      const response = await axios.post("/api/upload", formData, { headers });
       
       if (response.status === 200) {
         setMessage("✅ " + response.data.message);
-        // Route to chat page after successful upload
-        setTimeout(() => {
-          router.push('/chat');
-        }, 1500); // Wait 1.5 seconds to show success message
+        
+        // Check if we're on documents page and refresh it
+        if (window.location.pathname === '/documents') {
+          setTimeout(() => {
+            window.location.reload();
+          }, 2000); // Wait 2 seconds before refresh
+        } else {
+          // Route to documents page to see the uploaded file
+          setTimeout(() => {
+            router.push('/documents');
+          }, 1500);
+        }
       }
     } catch (error) {
       setMessage("❌ " + (error.response?.data?.error || error.message));
@@ -34,8 +44,6 @@ export default function FileUploader() {
       setUploading(false);
     }
   };
-
-  // Rest of your component remains the same...
 
   return (
     <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">

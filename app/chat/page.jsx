@@ -1,10 +1,12 @@
-import ChatUI from "../components/ChatUI";
+import AuthGuard from '../components/Authgurad'
+import ChatUI from '../components/ChatUI';
 
-export default function chatpage(){
-    return(
-        <div className="h-screen">
-            <ChatUI />
-
-        </div>
-    )
+export default function ChatPage() {
+  return (
+    <AuthGuard>
+      <div className="h-screen">
+        <ChatUI />
+      </div>
+    </AuthGuard>
+  );
 }

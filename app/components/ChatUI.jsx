@@ -1,6 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 import axios from "axios";
+import { getAuthHeaders } from '../lib/auth';
 
 export default function ChatUI() {
   const [messages, setMessages] = useState([]);
@@ -8,35 +9,33 @@ export default function ChatUI() {
   const [loading, setLoading] = useState(false);
   const [sessionId, setSessionId] = useState(null);
 
-  //Generate session ID on component mount
+  // Generate session ID on component mount
   useEffect(() => {
     setSessionId(`session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
   }, []);
 
-
-
   const sendMessage = async () => {
     if (!input.trim()) return;
 
-    // Add user message to chat
     const userMessage = { role: "user", content: input };
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setLoading(true);
 
     try {
-      // Send question to backend API
+      // Get auth headers and send with request
+      const headers = await getAuthHeaders();
       const res = await axios.post("/api/chat", { 
         question: input,
-        sessionId: sessionId
-      });
+        sessionId: sessionId 
+      }, { headers });
+      
       const botMessage = { 
         role: "assistant", 
         content: res.data.answer,
         sources: res.data.sources || []
       };
 
-      // Add AI response to chat
       setMessages((prev) => [...prev, botMessage]);
     } catch (err) {
       console.error('Chat error:', err.response?.data || err.message);

@@ -1,99 +1,145 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import axios from 'axios';
+import { withAuth } from '../../lib/auth-middleware';
 const { CohereClient } = require('cohere-ai');
-
-// Initialize clients
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-);
 
 const cohere = new CohereClient({ token: process.env.COHERE_API_KEY });
 
-export async function POST(req) {
+async function handleChat(req) {
   try {
-    const { question, sessionId, documentId } = await req.json();
+    // Create authenticated Supabase client
+    const authHeader = req.headers.get('authorization');
+    const token = authHeader.split(' ')[1];
+    
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      {
+        global: {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      }
+    );
+
+    const { question, sessionId } = await req.json();
 
     if (!question) {
       return NextResponse.json({ error: 'Question is required' }, { status: 400 });
     }
 
+    console.log('=== DEBUGGING CHAT API ===');
+    console.log('User ID:', req.user.id);
+    console.log('Question:', question);
+
+    // Check if user has any documents at all
+    const { data: userDocs, error: docsError } = await supabase
+      .from('documents_metadata')
+      .select('*')
+      .eq('user_id', req.user.id);
+
+    console.log('User documents in metadata:', userDocs?.length || 0);
+    console.log('Sample metadata:', userDocs?.[0] || 'No metadata');
+
+    // Check if user has any document chunks
+    const { data: userChunks, error: chunksError } = await supabase
+      .from('documents')
+      .select('id, content, document_id')
+      .limit(5);
+
+    console.log('Total document chunks in DB:', userChunks?.length || 0);
+    console.log('Sample chunk:', userChunks?.[0]?.content?.substring(0, 100) || 'No chunks');
+
+    // Check documents with proper join
+    const { data: joinedDocs, error: joinError } = await supabase
+      .from('documents')
+      .select(`
+        id, 
+        content,
+        document_id,
+        documents_metadata!inner(user_id, filename)
+      `)
+      .eq('documents_metadata.user_id', req.user.id)
+      .limit(3);
+
+    console.log('Joined documents for user:', joinedDocs?.length || 0);
+    console.log('Sample joined doc:', joinedDocs?.[0] || 'No joined docs');
+
     // Generate session ID if not provided
     const currentSessionId = sessionId || `session_${Date.now()}`;
 
-    // Get conversation history (last 5 messages for context)
+    // Get conversation history for this user
     const { data: history } = await supabase
       .from('conversations')
       .select('role, content')
       .eq('session_id', currentSessionId)
+      .eq('user_id', req.user.id)
       .order('created_at', { ascending: true })
       .limit(10);
 
-    // Store user message
+    // Store user message with user_id
     await supabase.from('conversations').insert({
       session_id: currentSessionId,
       role: 'user',
-      content: question
+      content: question,
+      user_id: req.user.id
     });
 
-    // 1. Generate embedding for the question
+    // Generate embedding for the question
     const questionEmbedding = await cohere.embed({
       texts: [question],
       model: 'embed-english-light-v3.0',
       inputType: 'search_query'
     });
 
-    // 2. Find similar documents (filter by documentId if provided)
-    let query = supabase.rpc('match_documents', {
+    console.log('Generated embedding length:', questionEmbedding.embeddings[0].length);
+
+    // Find similar documents (RLS will automatically filter by user)
+    const { data: documents, error } = await supabase.rpc('match_documents', {
       query_embedding: questionEmbedding.embeddings[0],
       match_threshold: 0.7,
       match_count: 3
     });
-    
-    if (documentId) {
-      query = supabase
-        .from('documents')
-        .select('*, similarity:embedding <-> $1')
-        .eq('document_id', documentId)
-        .order('similarity')
-        .limit(3);
-    }
-    
-    const { data: documents, error } = await query;
+
+    console.log('Documents found by match_documents:', documents?.length || 0);
+    console.log('Match documents error:', error);
+    console.log('Sample document content:', documents?.[0]?.content?.substring(0, 200) || 'No content');
 
     if (error) {
       console.error('Supabase search error:', error);
       return NextResponse.json({ error: 'Search failed' }, { status: 500 });
     }
 
-    // 3. Get document metadata for sources
-    const docIds = [...new Set(documents.map(d => d.document_id))];
-    const { data: docMeta } = await supabase
-      .from('documents_metadata')
-      .select('id, filename')
-      .in('id', docIds);
-    
-    const contextWithSources = documents.map((doc, index) => {
-      const meta = docMeta?.find(m => m.id === doc.document_id);
-      return {
-        content: doc.content,
-        source: meta ? `${meta.filename} (Chunk ${index + 1})` : `Document ${index + 1}`,
-        similarity: doc.similarity,
-        documentId: doc.document_id
-      };
-    });
+    // If no documents found, return a helpful message
+    if (!documents || documents.length === 0) {
+      return NextResponse.json({ 
+        answer: "I don't have any documents to search through. Please upload a PDF first and then ask your question.",
+        sources: [],
+        sessionId: currentSessionId
+      });
+    }
+
+    // Prepare context with conversation history
+    const contextWithSources = documents.map((doc, index) => ({
+      content: doc.content,
+      source: `Document ${index + 1} (ID: ${doc.id})`,
+      similarity: doc.similarity
+    }));
 
     const documentContext = contextWithSources.map(item => 
       `[Source: ${item.source}]\n${item.content}`
     ).join('\n\n---\n\n');
+
+    console.log('Context being sent to AI:', documentContext.substring(0, 300));
 
     // Build conversation context
     const conversationContext = history?.length > 0 
       ? history.map(msg => `${msg.role}: ${msg.content}`).join('\n')
       : '';
 
-    // 4. Enhanced prompt with conversation memory
+    // Generate answer using OpenRouter
     const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
       model: 'mistralai/mistral-7b-instruct:free',
       messages: [
@@ -124,13 +170,16 @@ Answer:`
 
     const answer = response.data.choices[0].message.content;
 
-    // Store assistant response
+    // Store assistant response with user_id
     await supabase.from('conversations').insert({
       session_id: currentSessionId,
       role: 'assistant',
       content: answer,
-      sources: contextWithSources
+      sources: contextWithSources,
+      user_id: req.user.id
     });
+
+    console.log('=== END DEBUGGING ===');
 
     return NextResponse.json({ 
       answer,
@@ -148,3 +197,5 @@ Answer:`
   }
 }
 
+// Export protected handler
+export const POST = withAuth(handleChat);

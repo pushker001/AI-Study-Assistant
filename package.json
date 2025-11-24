@@ -17,7 +17,7 @@
     "axios": "^1.13.1",
     "canvas": "^3.2.0",
     "cohere-ai": "^7.19.0",
-    "form-data": "^4.0.4",
+    "form-data": "^4.0.5",
     "langchain": "^1.0.2",
     "next": "16.0.1",
     "node-fetch": "^3.3.2",
