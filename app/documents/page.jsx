@@ -43,22 +43,33 @@ useEffect(() => {
 
   const handleDelete = async (documentIds) => {
     if (!confirm(`Delete ${documentIds.length} document(s)?`)) return;
-
+  
     setDeleting(true);
     try {
       const headers = await getAuthHeaders();
-      await axios.delete('/api/documents', { 
-        data: { documentIds },
-        headers 
-      });
+      
+      // Delete each document individually
+      for (const docId of documentIds) {
+        await axios.delete(`/api/documents/${docId}`, { headers });
+      }
+      
+      // Remove from frontend state
       setDocuments(docs => docs.filter(doc => !documentIds.includes(doc.id)));
       setSelectedDocs([]);
+      
+      // Refresh the list to be sure
+      setTimeout(() => {
+        fetchDocuments();
+      }, 1000);
+      
     } catch (error) {
+      console.error('Delete error:', error);
       alert('Error deleting documents');
     } finally {
       setDeleting(false);
     }
   };
+  
 
   const toggleSelect = (docId) => {
     setSelectedDocs(prev => 
@@ -140,7 +151,7 @@ useEffect(() => {
 
                   <div className="flex justify-between mt-4">
                     <Link 
-                      href="/chat" 
+                      href={`/chat/${doc.id}`}
                       className="text-blue-600 hover:text-blue-800 text-sm"
                     >
                       💬 Chat

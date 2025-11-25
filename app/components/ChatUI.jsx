@@ -3,13 +3,12 @@ import { useState, useEffect } from "react";
 import axios from "axios";
 import { getAuthHeaders } from '../lib/auth';
 
-export default function ChatUI() {
+export default function ChatUI({ documentId }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [sessionId, setSessionId] = useState(null);
 
-  // Generate session ID on component mount
   useEffect(() => {
     setSessionId(`session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
   }, []);
@@ -23,11 +22,11 @@ export default function ChatUI() {
     setLoading(true);
 
     try {
-      // Get auth headers and send with request
       const headers = await getAuthHeaders();
       const res = await axios.post("/api/chat", { 
         question: input,
-        sessionId: sessionId 
+        sessionId: sessionId,
+        documentId: documentId  // Pass the specific document ID
       }, { headers });
       
       const botMessage = { 
@@ -50,6 +49,13 @@ export default function ChatUI() {
 
   return (
     <div className="flex flex-col h-screen bg-gray-100">
+      {/* Header showing which document */}
+      {documentId && (
+        <div className="bg-blue-600 text-white p-3 text-center">
+          Chatting with Document: {documentId}
+        </div>
+      )}
+
       {/* Chat messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.map((msg, i) => (
@@ -70,7 +76,6 @@ export default function ChatUI() {
                 {msg.content}
               </div>
               
-              {/* Sources section for assistant messages */}
               {msg.role === "assistant" && msg.sources && msg.sources.length > 0 && (
                 <div className="mt-2 text-xs text-gray-600">
                   <details className="cursor-pointer">
@@ -113,7 +118,7 @@ export default function ChatUI() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-          placeholder="Ask something about your PDF..."
+          placeholder="Ask something about this PDF..."
           className="flex-1 p-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
         <button

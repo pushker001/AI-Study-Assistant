@@ -14,7 +14,7 @@ async function extractTextFromPDF(buffer) {
     const formData = new FormData();
     formData.append('file', buffer, 'document.pdf');
     
-    const response = await axios.post('http://localhost:8001/extract-pdf', formData, {
+    const response = await axios.post(`${process.env.PDF_EXTRACTION_SERVICE_URL}/extract-pdf`, formData, {
       headers: {
         ...formData.getHeaders(),
         'Content-Type': 'multipart/form-data'
@@ -81,6 +81,13 @@ async function handleUpload(req) {
       .single();
 
     if (metaError) {
+      //Handle unique constraint violation
+      if(metaError.code === '23505') {
+        return NextResponse.json({
+          error: "You already have a document uploaded. Please delete it first to upload a new one."
+
+        }, { status: 400 });
+      }
       console.error('Metadata creation error:', metaError);
       return NextResponse.json({ error: 'Failed to create document record' }, { status: 500 });
     }
